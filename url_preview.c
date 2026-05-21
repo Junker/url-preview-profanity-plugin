@@ -75,6 +75,7 @@ static void        trim_cache(gint limit);
 /* Filtering */
 static gboolean    is_extension_ignored(const gchar *path);
 static gboolean    is_domain_ignored(const gchar *domain);
+static gboolean    is_local_host(const gchar *host);
 
 /* Network */
 static gchar      *get_url_preview(const gchar *url, gint timeout);
@@ -325,6 +326,30 @@ static gboolean is_domain_ignored(const gchar *domain)
     return strv_contains_ci(ignored, domain);
 }
 
+static gboolean is_local_host(const gchar *host)
+{
+    if (!host) return FALSE;
+
+    /* Check for localhost hostname */
+    if (g_ascii_strcasecmp(host, "localhost") == 0)
+        return TRUE;
+
+    /* Check for .local mDNS hostnames */
+    if (g_str_has_suffix(host, ".local"))
+        return TRUE;
+
+    /* Try to parse as an IP address */
+    g_autoptr(GInetAddress) addr = g_inet_address_new_from_string(host);
+    if (addr) {
+        if (g_inet_address_get_is_loopback(addr) ||
+            g_inet_address_get_is_site_local(addr) ||
+            g_inet_address_get_is_link_local(addr))
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
 /* ------------------------------------------------------------------ */
 /*  HTTP fetch (libcurl)                                              */
 /* ------------------------------------------------------------------ */
@@ -532,6 +557,10 @@ static gboolean should_skip_url(const gchar *url, const gchar *jid_domain)
     /* Skip same domain or subdomain of JID */
     if (g_strcmp0(host_lower, jid_domain) == 0 ||
         g_str_has_suffix(host_lower, domain_suffix))
+        return TRUE;
+
+    /* Skip local/private addresses (loopback, site-local, link-local) */
+    if (is_local_host(host_lower))
         return TRUE;
 
     /* Skip ignored domains */
