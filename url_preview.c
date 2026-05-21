@@ -8,6 +8,7 @@
 #include <curl/curl.h>
 #include <glib.h>
 #include <gio/gio.h>
+#include <strophe.h>
 
 #include <profapi.h>
 
@@ -50,6 +51,7 @@ static gchar * const SET_GROUP = "url_preview";
 
 static gchar       *cache_path   = NULL;
 static GHashTable  *url_cache    = NULL;
+static xmpp_ctx_t *strophe_ctx  = NULL;
 
 /* Compiled regexes (initialised once in prof_init) */
 static GRegex *re_url;
@@ -593,19 +595,6 @@ static gchar *extract_metadata(const gchar *html, gsize len)
 /*  JID / URL helpers                                                 */
 /* ------------------------------------------------------------------ */
 
-static gchar *get_jid_domain(const gchar *jid)
-{
-    if (!jid) return NULL;
-
-    /* Strip resource */
-    g_autofree gchar *barejid = NULL;
-    const gchar *slash = strchr(jid, '/');
-    barejid = slash ? g_strndup(jid, slash - jid) : g_strdup(jid);
-
-    /* Extract domain (part after @) */
-    const gchar *at = strchr(barejid, '@');
-    return g_utf8_strdown(at ? at + 1 : barejid, -1);
-}
 
 /** Strip common trailing punctuation from a URL. */
 static void strip_trailing_punct(gchar *url)
@@ -660,7 +649,7 @@ static gchar *add_preview_to_message(const gchar *jid, const gchar *message)
     if (!prof_settings_boolean_get(SET_GROUP, "enable", TRUE))
         return NULL;
 
-    g_autofree gchar *jid_domain = get_jid_domain(jid);
+    char *jid_domain = xmpp_jid_domain(strophe_ctx, jid);
     if (!jid_domain) return NULL;
 
     gint timeout = prof_settings_int_get(SET_GROUP, "timeout", 2);
@@ -714,12 +703,15 @@ static gchar *add_preview_to_message(const gchar *jid, const gchar *message)
         g_match_info_next(match, NULL);
     }
 
+	xmpp_free(strophe_ctx, jid_domain);
+
     /* Return result only if we appended a preview */
     gchar *result = NULL;
     if (output->len > strlen(message))
         result = g_string_free(output, FALSE);
     else
         g_string_free(output, TRUE);
+
 
     return result;
 }
@@ -905,6 +897,11 @@ static void plugin_cleanup(void)
 
     g_free(cache_path);
     cache_path = NULL;
+
+    if (strophe_ctx) {
+        xmpp_ctx_free(strophe_ctx);
+        strophe_ctx = NULL;
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -962,6 +959,7 @@ void prof_init(const char *version, const char *status,
     prof_completer_add("/url_preview cache",  on_off);
 
     /* Initialise state */
+    strophe_ctx = xmpp_ctx_new(NULL, NULL);
     prepare_regexes();
     load_cache();
 }
