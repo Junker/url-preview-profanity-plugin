@@ -3,6 +3,7 @@
 // Fetches and displays title/description previews for URLs in chat messages.
 // Configurable via /url_preview command. Caches results to disk.
 
+#include <stdlib.h>
 #include <string.h>
 #include <curl/curl.h>
 #include <glib.h>
@@ -84,6 +85,7 @@ static gchar      *get_url_preview(const gchar *url, gint timeout);
 static gchar      *extract_metadata(const gchar *html, gsize len);
 static gchar      *extract_html_title(const gchar *html);
 static gchar      *extract_html_description(const gchar *html);
+static gchar      *unescape_html(const gchar *text);
 
 /* Message processing */
 static gchar      *add_preview_to_message(const gchar *jid, const gchar *message);
@@ -436,6 +438,76 @@ static gchar *get_url_preview(const gchar *url, gint timeout)
 }
 
 /* ------------------------------------------------------------------ */
+/*  HTML entity unescaping                                            */
+/* ------------------------------------------------------------------ */
+
+/** Decode common HTML entities (&amp; &lt; &gt; &quot; &apos; &nbsp;
+ *  as well as numeric references &#NNN; and &#xHHH;). */
+static gchar *unescape_html(const gchar *text)
+{
+    if (!text || !*text)
+        return g_strdup(text ? text : "");
+
+    GString *out = g_string_sized_new(strlen(text));
+    const gchar *p = text;
+
+    while (*p) {
+        if (*p != '&') {
+            g_string_append_c(out, *p);
+            p++;
+            continue;
+        }
+
+        /* Named entities */
+        if (g_str_has_prefix(p, "&amp;"))    { g_string_append_c(out, '&');  p += 5; continue; }
+        if (g_str_has_prefix(p, "&lt;"))     { g_string_append_c(out, '<');  p += 4; continue; }
+        if (g_str_has_prefix(p, "&gt;"))     { g_string_append_c(out, '>');  p += 4; continue; }
+        if (g_str_has_prefix(p, "&quot;"))   { g_string_append_c(out, '"');  p += 6; continue; }
+        if (g_str_has_prefix(p, "&apos;"))   { g_string_append_c(out, '\''); p += 6; continue; }
+        if (g_str_has_prefix(p, "&#39;"))    { g_string_append_c(out, '\''); p += 5; continue; }
+        if (g_str_has_prefix(p, "&nbsp;"))   { g_string_append_c(out, ' ');  p += 6; continue; }
+
+        /* Hex numeric entity  &#xHHH; */
+        if (p[1] == '#' && (p[2] == 'x' || p[2] == 'X')) {
+            const gchar *semi = strchr(p + 3, ';');
+            if (semi) {
+                gchar *endptr = NULL;
+                gulong val = strtoul(p + 3, &endptr, 16);
+                if (endptr == semi && val != 0 && g_unichar_validate((gunichar)val)) {
+                    gchar buf[6];
+                    gint len = g_unichar_to_utf8((gunichar)val, buf);
+                    g_string_append_len(out, buf, len);
+                    p = semi + 1;
+                    continue;
+                }
+            }
+        }
+
+        /* Decimal numeric entity  &#NNN; */
+        if (p[1] == '#') {
+            const gchar *semi = strchr(p + 2, ';');
+            if (semi) {
+                gchar *endptr = NULL;
+                gulong val = strtoul(p + 2, &endptr, 10);
+                if (endptr == semi && val != 0 && g_unichar_validate((gunichar)val)) {
+                    gchar buf[6];
+                    gint len = g_unichar_to_utf8((gunichar)val, buf);
+                    g_string_append_len(out, buf, len);
+                    p = semi + 1;
+                    continue;
+                }
+            }
+        }
+
+        /* Not a recognised entity – copy literally */
+        g_string_append_c(out, *p);
+        p++;
+    }
+
+    return g_string_free(out, FALSE);
+}
+
+/* ------------------------------------------------------------------ */
 /*  HTML metadata extraction (GRegex-based, case-insensitive)         */
 /* ------------------------------------------------------------------ */
 
@@ -449,7 +521,9 @@ static gchar *extract_html_title(const gchar *html)
     if (!raw) return NULL;
 
     g_strstrip(raw);
-    return (*raw) ? g_steal_pointer(&raw) : NULL;
+    if (!*raw) return NULL;
+
+    return unescape_html(raw);
 }
 
 static gchar *extract_html_description(const gchar *html)
@@ -473,10 +547,10 @@ static gchar *extract_html_description(const gchar *html)
 
         if (!og_desc && prop &&
             g_ascii_strcasecmp(prop, "og:description") == 0) {
-            og_desc = g_strdup(content);
+            og_desc = unescape_html(content);
         } else if (!meta_desc && name &&
                    g_ascii_strcasecmp(name, "description") == 0) {
-            meta_desc = g_strdup(content);
+            meta_desc = unescape_html(content);
         }
 
         if (og_desc && meta_desc) break;
