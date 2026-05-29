@@ -2,12 +2,12 @@
 
 A native C plugin for [Profanity](https://profanity-im.github.io/) that automatically fetches and displays link previews in chat messages.
 
-When someone sends a URL, the plugin retrieves the page and appends the **title** and **description** directly in the message display — no need to click through.
+When someone sends a URL, the plugin parses the page and appends the **title** and **description** directly in the message display — no need to click through.
 
 ```
-21:30 alice  hey check this out https://arstechnica.com
-                   🔗 Title: Ars Technica
-                   📝 Desc: Serving the technologist for 25+ years…
+21:30 alice  hey check this out https://xmpp.org
+                   🔗 Title: XMPP - The universal messaging standard
+                   📝 Desc: XMPP is the Extensible Messaging and Presence Protocol…
 ```
 
 ## Features
