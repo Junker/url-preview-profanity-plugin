@@ -908,8 +908,10 @@ static void plugin_cleanup(void)
 /*  Profanity hooks                                                   */
 /* ------------------------------------------------------------------ */
 
-void prof_init(const char *version, const char *status,
-               const char *account_name, const char *fulljid)
+void prof_init(G_GNUC_UNUSED const char *const version,
+               G_GNUC_UNUSED const char *const status,
+               G_GNUC_UNUSED const char *const account_name,
+               G_GNUC_UNUSED const char *const fulljid)
 {
     prof_log_info("url_preview plugin initialized");
 
@@ -975,19 +977,22 @@ void prof_on_unload(void)
     plugin_cleanup();
 }
 
-char *prof_pre_chat_message_display(const char *barejid, const char *resource,
+char *prof_pre_chat_message_display(const char *barejid,
+                                    G_GNUC_UNUSED const char *resource,
                                     const char *message)
 {
     return add_preview_to_message(barejid, message);
 }
 
-char *prof_pre_room_message_display(const char *barejid, const char *nick,
+char *prof_pre_room_message_display(const char *barejid,
+                                    G_GNUC_UNUSED const char *nick,
                                     const char *message)
 {
     return add_preview_to_message(barejid, message);
 }
 
-char *prof_pre_priv_message_display(const char *barejid, const char *nick,
+char *prof_pre_priv_message_display(const char *barejid,
+                                    G_GNUC_UNUSED const char *nick,
                                     const char *message)
 {
     return add_preview_to_message(barejid, message);

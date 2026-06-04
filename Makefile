@@ -4,7 +4,7 @@ BUILD_DIR = build
 INSTALL_DIR = $(HOME)/.local/share/profanity/plugins
 
 CC ?= gcc
-CFLAGS ?= -Wall -Wextra -Wno-unused-parameter
+CFLAGS ?= -Wall -Wextra
 PROFANITY_LIBS = "-lprofanity"
 STROPHE_CFLAGS = $(shell pkg-config --cflags libstrophe 2>/dev/null || echo "")
 STROPHE_LIBS = $(shell pkg-config --libs libstrophe 2>/dev/null || echo "-lstrophe")
