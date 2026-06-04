@@ -890,18 +890,9 @@ static void plugin_cleanup(void)
 {
     save_cache();
 
-    if (url_cache) {
-        g_hash_table_destroy(url_cache);
-        url_cache = NULL;
-    }
-
-    g_free(cache_path);
-    cache_path = NULL;
-
-    if (strophe_ctx) {
-        xmpp_ctx_free(strophe_ctx);
-        strophe_ctx = NULL;
-    }
+    g_clear_pointer(&url_cache, g_hash_table_destroy);
+    g_clear_pointer(&cache_path, g_free);
+    g_clear_pointer(&strophe_ctx, xmpp_ctx_free);
 }
 
 /* ------------------------------------------------------------------ */
