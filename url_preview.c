@@ -845,6 +845,45 @@ static void cmd_handle_ignored_domains(char **args)
     }
 }
 
+static void cmd_handle_status(G_GNUC_UNUSED char **args)
+{
+    gboolean enable     = prof_settings_boolean_get(SET_GROUP, "enable", TRUE);
+    gboolean cache      = prof_settings_boolean_get(SET_GROUP, "cache", TRUE);
+    gint     cache_size = prof_settings_int_get(SET_GROUP, "cache_size", DEFAULT_CACHE_SIZE);
+    gint     timeout    = prof_settings_int_get(SET_GROUP, "timeout", 2);
+    g_autofree gchar *ignored_exts = prof_settings_string_get(
+        SET_GROUP, "ignored_extensions", DEFAULT_EXTS);
+    g_autofree gchar *ignored_doms = prof_settings_string_get(
+        SET_GROUP, "ignored_domains", DEFAULT_DOMAINS);
+    gint cached_urls = url_cache ? g_hash_table_size(url_cache) : 0;
+
+    prof_cons_show("URL Preview Settings:");
+    prof_cons_show(enable     ? "  Enable:             ON"
+                              : "  Enable:             OFF");
+    prof_cons_show(cache      ? "  Cache:              ON"
+                              : "  Cache:              OFF");
+    {
+        g_autofree gchar *msg = g_strdup_printf(
+            "  Cache size:         %d (%d used)", cache_size, cached_urls);
+        prof_cons_show(msg);
+    }
+    {
+        g_autofree gchar *msg = g_strdup_printf(
+            "  Timeout:            %d sec", timeout);
+        prof_cons_show(msg);
+    }
+    {
+        g_autofree gchar *msg = g_strdup_printf(
+            "  Ignored extensions: %s", ignored_exts);
+        prof_cons_show(msg);
+    }
+    {
+        g_autofree gchar *msg = g_strdup_printf(
+            "  Ignored domains:    %s", ignored_doms ? ignored_doms : "(none)");
+        prof_cons_show(msg);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /*  /url_preview command dispatch                                     */
 /* ------------------------------------------------------------------ */
@@ -863,14 +902,14 @@ static const CmdDispatch cmd_dispatch[] = {
     { "timeout",             cmd_handle_timeout             },
     { "ignored_extensions",  cmd_handle_ignored_extensions  },
     { "ignored_domains",     cmd_handle_ignored_domains     },
+    { "status",              cmd_handle_status              },
     { NULL, NULL }
 };
 
 static void cmd_url_preview(char **args)
 {
     if (!args[0]) {
-        prof_cons_show("Usage: /url_preview [enable|ignored_extensions|"
-                       "ignored_domains|timeout|cache|cache_size] [value]");
+        cmd_handle_status(NULL);
         return;
     }
 
@@ -912,6 +951,8 @@ void prof_init(G_GNUC_UNUSED const char *const version,
 
     /* Register command */
     gchar *synopsis[] = {
+        "/url_preview",
+        "/url_preview status",
         "/url_preview enable [on|off]",
         "/url_preview ignored_extensions [list]",
         "/url_preview ignored_domains [list]",
@@ -924,6 +965,7 @@ void prof_init(G_GNUC_UNUSED const char *const version,
     gchar *description = "Configure URL Preview plugin settings.";
 
     gchar *arguments[][2] = {
+        {"status",              "Show current settings"},
         {"enable",              "Enable or disable the plugin"},
         {"ignored_extensions",  "Comma-separated list of extensions to ignore"},
         {"ignored_domains",     "Comma-separated list of domains to ignore"},
@@ -934,6 +976,7 @@ void prof_init(G_GNUC_UNUSED const char *const version,
     };
 
     gchar *examples[] = {
+        "/url_preview",
         "/url_preview enable off",
         "/url_preview ignored_extensions .jpg,.png,.gif",
         "/url_preview ignored_domains upload.example.com,share.org",
@@ -943,11 +986,11 @@ void prof_init(G_GNUC_UNUSED const char *const version,
         NULL
     };
 
-    prof_register_command("/url_preview", 1, 10, synopsis, description,
+    prof_register_command("/url_preview", 0, 10, synopsis, description,
                           arguments, examples, cmd_url_preview);
 
     /* Register completions */
-    gchar *completions[] = {"enable", "ignored_extensions", "ignored_domains",
+    gchar *completions[] = {"status", "enable", "ignored_extensions", "ignored_domains",
                             "timeout", "cache", "cache_size", NULL};
     prof_completer_add("/url_preview", completions);
 
