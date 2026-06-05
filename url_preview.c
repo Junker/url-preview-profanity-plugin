@@ -396,6 +396,8 @@ static gboolean sniff_is_html(const gchar *data)
 
 static gchar *get_url_preview(const gchar *url, gint timeout)
 {
+    log_debug("getting preview for URL: %s", url);
+
     CURL *curl = curl_easy_init();
     if (!curl) return NULL;
 
