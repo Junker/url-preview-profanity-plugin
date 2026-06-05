@@ -685,15 +685,17 @@ static gchar *add_preview_to_message(const gchar *jid, const gchar *message)
             continue;
         }
 
+        gint cache_size = prof_settings_int_get(SET_GROUP, "cache_size", DEFAULT_CACHE_SIZE);
+
         /* Fetch and cache */
         gchar *preview = get_url_preview(url, timeout);
         if (preview == NULL) {
+            put_cache(url, "", cache_size);  /* remember: no preview available */
             g_match_info_next(match, NULL);
             continue;
         }
 
-        gint cache_size = prof_settings_int_get(SET_GROUP, "cache_size", DEFAULT_CACHE_SIZE);
-        put_cache(url, preview ?: "", cache_size);
+        put_cache(url, preview, cache_size);
 
         if (preview) {
             g_string_append_c(output, '\n');
