@@ -10,12 +10,14 @@ STROPHE_CFLAGS = $(shell pkg-config --cflags libstrophe 2>/dev/null || echo "")
 STROPHE_LIBS = $(shell pkg-config --libs libstrophe 2>/dev/null || echo "-lstrophe")
 GLIB_CFLAGS = $(shell pkg-config --cflags glib-2.0 2>/dev/null || echo "")
 GLIB_LIBS = $(shell pkg-config --libs glib-2.0 2>/dev/null || echo "-lglib-2.0")
+CURL_CFLAGS = $(shell pkg-config --cflags libcurl 2>/dev/null || echo "")
+CURL_LIBS = $(shell pkg-config --libs libcurl 2>/dev/null || echo "-lcurl")
 
 all: $(BUILD_DIR)/$(PLUGIN_NAME).so
 
 $(BUILD_DIR)/$(PLUGIN_NAME).so: $(SRC)
 	mkdir -p $(BUILD_DIR)
-	$(CC) -shared -o $@ -fPIC $(CFLAGS) $(STROPHE_CFLAGS) $(GLIB_CFLAGS) -Wl,-rpath=$(LIBRARY_PATH) $< $(PROFANITY_LIBS) $(STROPHE_LIBS) $(GLIB_LIBS)
+	$(CC) -shared -o $@ -fPIC $(CFLAGS) $(STROPHE_CFLAGS) $(GLIB_CFLAGS) $(GIO_CFLAGS) $(CURL_CFLAGS) -Wl,-rpath=$(LIBRARY_PATH) $< $(PROFANITY_LIBS) $(STROPHE_LIBS) $(GLIB_LIBS) $(GIO_LIBS) $(CURL_LIBS)
 
 install: all
 	mkdir -p $(INSTALL_DIR)
