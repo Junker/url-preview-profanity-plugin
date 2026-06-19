@@ -119,21 +119,12 @@ static void prepare_regexes(void)
 /*  Utility helpers                                                   */
 /* ------------------------------------------------------------------ */
 
-/** Parse a boolean string (on/true/1/yes or off/false/0/no). */
+/** Parse a boolean string ("on" or "off"). */
 static gboolean parse_bool_value(const gchar *val, gboolean default_val)
 {
     if (!val) return default_val;
-
-    g_autofree gchar *lower = g_utf8_strdown(val, -1);
-
-    if (g_strcmp0(lower, "on") == 0  || g_strcmp0(lower, "true") == 0 ||
-        g_strcmp0(lower, "1") == 0   || g_strcmp0(lower, "yes") == 0)
-        return TRUE;
-
-    if (g_strcmp0(lower, "off") == 0  || g_strcmp0(lower, "false") == 0 ||
-        g_strcmp0(lower, "0") == 0    || g_strcmp0(lower, "no") == 0)
-        return FALSE;
-
+    if (g_str_equal(val, "on"))  return TRUE;
+    if (g_str_equal(val, "off")) return FALSE;
     return default_val;
 }
 
