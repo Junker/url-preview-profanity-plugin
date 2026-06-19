@@ -435,6 +435,84 @@ static gchar *get_url_preview(const gchar *url, gint timeout)
 
 /** Decode common HTML entities (&amp; &lt; &gt; &quot; &apos; &nbsp;
  *  as well as numeric references &#NNN; and &#xHHH;). */
+/** Named HTML entity lookup table. Sorted for potential binary search. */
+typedef struct {
+    const gchar *entity;   /* includes & and ; */
+    gsize         elen;    /* strlen(entity) */
+    gunichar      cp;      /* replacement codepoint */
+} HtmlEntity;
+
+/* Common HTML named entities (HTML5 named character references subset) */
+static const HtmlEntity html_entities[] = {
+    { "&amp;",     5, '&'   },
+    { "&apos;",    6, '\''  },
+    { "&cent;",    6, 0xA2  },  /* ¢ */
+    { "&copy;",    6, 0xA9  },  /* © */
+    { "&euro;",    6, 0x20AC},  /* € */
+    { "&gt;",      4, '>'   },
+    { "&hairsp;",  8, 0x200A},  /* hair space */
+    { "&laquo;",   7, 0xAB  },  /* « */
+    { "&ldquo;",   7, 0x201C},  /* " */
+    { "&lsquo;",   7, 0x2018},  /* ' */
+    { "&lt;",      4, '<'   },
+    { "&mdash;",   7, 0x2014},  /* — */
+    { "&ndash;",   7, 0x2013},  /* – */
+    { "&nbsp;",    6, ' '   },
+    { "&quot;",    6, '"'   },
+    { "&raquo;",   7, 0xBB  },  /* » */
+    { "&rdquo;",   7, 0x201D},  /* " */
+    { "&reg;",     5, 0xAE  },  /* ® */
+    { "&rsquo;",   7, 0x2019},  /* ' */
+    { "&sect;",    6, 0xA7  },  /* § */
+    { "&thinsp;",  8, 0x2009},  /* thin space */
+    { "&trade;",   7, 0x2122},  /* ™ */
+    { "&yen;",     5, 0xA5  },  /* ¥ */
+};
+
+/** Try to match a named entity at @p and append its replacement.
+ *  Returns the number of characters consumed, or 0 on no match. */
+static gsize try_named_entity(const gchar *p, GString *out)
+{
+    for (gsize i = 0; i < G_N_ELEMENTS(html_entities); i++) {
+        if (g_str_has_prefix(p, html_entities[i].entity)) {
+            gchar buf[6];
+            gint len = g_unichar_to_utf8(html_entities[i].cp, buf);
+            g_string_append_len(out, buf, len);
+            return html_entities[i].elen;
+        }
+    }
+    return 0;
+}
+
+/** Try to parse a numeric character reference at @p (decimal &#NNN; or hex &#xHHH;).
+ *  Returns characters consumed, or 0 on failure. */
+static gsize try_numeric_entity(const gchar *p, GString *out)
+{
+    if (p[1] != '#') return 0;
+
+    gint base = 10;
+    const gchar *start = p + 2;
+
+    if (p[2] == 'x' || p[2] == 'X') {
+        base = 16;
+        start = p + 3;
+    }
+
+    const gchar *semi = strchr(start, ';');
+    if (!semi) return 0;
+
+    gchar *endptr = NULL;
+    gulong val = strtoul(start, &endptr, base);
+    if (endptr != semi || val == 0 || !g_unichar_validate((gunichar)val))
+        return 0;
+
+    gchar buf[6];
+    gint len = g_unichar_to_utf8((gunichar)val, buf);
+    g_string_append_len(out, buf, len);
+    return semi - p + 1;
+}
+
+/** Decode HTML entities and numeric character references. */
 static gchar *unescape_html(const gchar *text)
 {
     if (!text || !*text)
@@ -450,50 +528,17 @@ static gchar *unescape_html(const gchar *text)
             continue;
         }
 
-        /* Named entities */
-        if (g_str_has_prefix(p, "&amp;"))    { g_string_append_c(out, '&');  p += 5; continue; }
-        if (g_str_has_prefix(p, "&lt;"))     { g_string_append_c(out, '<');  p += 4; continue; }
-        if (g_str_has_prefix(p, "&gt;"))     { g_string_append_c(out, '>');  p += 4; continue; }
-        if (g_str_has_prefix(p, "&quot;"))   { g_string_append_c(out, '"');  p += 6; continue; }
-        if (g_str_has_prefix(p, "&apos;"))   { g_string_append_c(out, '\''); p += 6; continue; }
-        if (g_str_has_prefix(p, "&#39;"))    { g_string_append_c(out, '\''); p += 5; continue; }
-        if (g_str_has_prefix(p, "&nbsp;"))   { g_string_append_c(out, ' ');  p += 6; continue; }
+        gsize consumed = try_named_entity(p, out);
+        if (!consumed)
+            consumed = try_numeric_entity(p, out);
 
-        /* Hex numeric entity  &#xHHH; */
-        if (p[1] == '#' && (p[2] == 'x' || p[2] == 'X')) {
-            const gchar *semi = strchr(p + 3, ';');
-            if (semi) {
-                gchar *endptr = NULL;
-                gulong val = strtoul(p + 3, &endptr, 16);
-                if (endptr == semi && val != 0 && g_unichar_validate((gunichar)val)) {
-                    gchar buf[6];
-                    gint len = g_unichar_to_utf8((gunichar)val, buf);
-                    g_string_append_len(out, buf, len);
-                    p = semi + 1;
-                    continue;
-                }
-            }
+        if (consumed) {
+            p += consumed;
+        } else {
+            /* Not a recognised entity – copy literally */
+            g_string_append_c(out, *p);
+            p++;
         }
-
-        /* Decimal numeric entity  &#NNN; */
-        if (p[1] == '#') {
-            const gchar *semi = strchr(p + 2, ';');
-            if (semi) {
-                gchar *endptr = NULL;
-                gulong val = strtoul(p + 2, &endptr, 10);
-                if (endptr == semi && val != 0 && g_unichar_validate((gunichar)val)) {
-                    gchar buf[6];
-                    gint len = g_unichar_to_utf8((gunichar)val, buf);
-                    g_string_append_len(out, buf, len);
-                    p = semi + 1;
-                    continue;
-                }
-            }
-        }
-
-        /* Not a recognised entity – copy literally */
-        g_string_append_c(out, *p);
-        p++;
     }
 
     return g_string_free(out, FALSE);
