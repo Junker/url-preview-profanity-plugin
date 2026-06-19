@@ -43,7 +43,7 @@ typedef struct {
 } CurlBuffer;
 
 /* Settings group/name constants */
-static gchar * const SET_GROUP = "url_preview";
+static char *SET_GROUP = "url_preview";
 
 /* ------------------------------------------------------------------ */
 /*  Static globals                                                    */
@@ -128,14 +128,12 @@ static gboolean parse_bool_value(const gchar *val, gboolean default_val)
     return default_val;
 }
 
-
-/* Printf-style wrapper around prof_log_debug */
+/* Printf-style wrapper around prof_log_debug; prefix is baked into the
+ * format string so we only allocate once. */
 #define log_debug(fmt, ...) do { \
-        gchar *_ld_msg = g_strdup_printf(fmt, ##__VA_ARGS__); \
-        gchar *_ld_msg2 = g_strconcat("url_preview plugin: ", _ld_msg, NULL); \
-        prof_log_debug(_ld_msg2); \
+        gchar *_ld_msg = g_strdup_printf("url_preview plugin: " fmt, ##__VA_ARGS__); \
+        prof_log_debug(_ld_msg); \
         g_free(_ld_msg); \
-        g_free(_ld_msg2); \
     } while (0)
 
 /* ------------------------------------------------------------------ */
@@ -279,27 +277,32 @@ static void put_cache(const gchar *url, const gchar *preview_text, gint limit)
 /*  Ignored domains & extensions                                      */
 /* ------------------------------------------------------------------ */
 
+/** Lowercase all entries in a NULL-terminated string vector (in place). */
+static void strv_lowercase_inplace(gchar **strv)
+{
+    for (gint i = 0; strv[i]; i++) {
+        gchar *lower = g_utf8_strdown(strv[i], -1);
+        g_free(strv[i]);
+        strv[i] = lower;
+    }
+}
+
 static gchar **get_ignored_domains(void)
 {
     g_autofree gchar *raw = prof_settings_string_get(
         SET_GROUP, "ignored_domains", DEFAULT_DOMAINS);
-    return g_strsplit_set(raw, ",", -1);
+    gchar **result = g_strsplit_set(raw, ",", -1);
+    strv_lowercase_inplace(result);
+    return result;
 }
 
 static gchar **get_ignored_exts(void)
 {
     g_autofree gchar *raw = prof_settings_string_get(
         SET_GROUP, "ignored_extensions", DEFAULT_EXTS);
-    return g_strsplit_set(raw, ",", -1);
-}
-
-static gboolean strv_contains_ci(GStrv strv, const gchar *needle)
-{
-    for (gint i = 0; strv[i]; i++) {
-        if (g_strcmp0(needle, strv[i]) == 0)
-            return TRUE;
-    }
-    return FALSE;
+    gchar **result = g_strsplit_set(raw, ",", -1);
+    strv_lowercase_inplace(result);
+    return result;
 }
 
 static gboolean is_extension_ignored(const gchar *path)
@@ -310,15 +313,17 @@ static gboolean is_extension_ignored(const gchar *path)
     g_autofree gchar *ext = g_utf8_strdown(dot, -1);
     g_auto(GStrv) ignored = get_ignored_exts();
 
-    return strv_contains_ci(ignored, ext);
+    return g_strv_contains((const gchar *const *)ignored, ext);
 }
 
 static gboolean is_domain_ignored(const gchar *domain)
 {
     g_auto(GStrv) ignored = get_ignored_domains();
-    return strv_contains_ci(ignored, domain);
+    return g_strv_contains((const gchar *const *)ignored, domain);
 }
 
+/** Check whether host refers to a local/private address.
+ *  Expects host to be already lower-cased by the caller. */
 static gboolean is_local_host(const gchar *host)
 {
     if (!host) return FALSE;
@@ -630,7 +635,6 @@ static gchar *extract_metadata(const gchar *html, gsize len)
 /*  JID / URL helpers                                                 */
 /* ------------------------------------------------------------------ */
 
-
 /** Strip common trailing punctuation from a URL. */
 static void strip_trailing_punct(gchar *url)
 {
@@ -744,40 +748,41 @@ static gchar *add_preview_to_message(const gchar *jid, const gchar *message)
     else
         g_string_free(output, TRUE);
 
-
     return result;
 }
 
 /* ------------------------------------------------------------------ */
-/*  /url_preview command sub-handlers                                 */
+/*  /url_preview command helpers                                      */
 /* ------------------------------------------------------------------ */
 
-static void cmd_handle_enable(char **args)
+/** Generic handler for boolean settings (enable, cache). */
+static void cmd_handle_bool_setting(char **args, char *key,
+                                    const gchar *label, gboolean default_val)
 {
     if (args[0]) {
-        gboolean val = parse_bool_value(args[0], TRUE);
-        prof_settings_boolean_set(SET_GROUP, "enable", val);
-        prof_cons_show(val ? "URL Preview enabled."
-                           : "URL Preview disabled.");
+        gboolean val = parse_bool_value(args[0], default_val);
+        prof_settings_boolean_set(SET_GROUP, key, val);
+        g_autofree gchar *msg = g_strdup_printf("%s %s.", label,
+                                                 val ? "enabled" : "disabled");
+        prof_cons_show(msg);
     } else {
-        gboolean current = prof_settings_boolean_get(SET_GROUP, "enable", TRUE);
-        prof_cons_show(current ? "URL Preview is currently enabled."
-                               : "URL Preview is currently disabled.");
+        gboolean current = prof_settings_boolean_get(SET_GROUP, key, default_val);
+        g_autofree gchar *msg = g_strdup_printf("%s is currently %s.", label,
+                                                  current ? "enabled" : "disabled");
+        prof_cons_show(msg);
     }
 }
 
-static void cmd_handle_cache(char **args)
+/** Parse a positive integer from a string; returns TRUE on success. */
+static gboolean parse_positive_int(const gchar *str, gint *out)
 {
-    if (args[0]) {
-        gboolean val = parse_bool_value(args[0], TRUE);
-        prof_settings_boolean_set(SET_GROUP, "cache", val);
-        prof_cons_show(val ? "URL Preview cache enabled."
-                           : "URL Preview cache disabled.");
-    } else {
-        gboolean current = prof_settings_boolean_get(SET_GROUP, "cache", TRUE);
-        prof_cons_show(current ? "URL Preview cache is currently enabled."
-                               : "URL Preview cache is currently disabled.");
+    gchar *endptr = NULL;
+    guint64 val = g_ascii_strtoll(str, &endptr, 10);
+    if (*endptr == '\0' && val > 0 && val <= G_MAXINT) {
+        *out = (gint)val;
+        return TRUE;
     }
+    return FALSE;
 }
 
 static void show_current_int(char *key, const gchar *label, gint default_val)
@@ -787,19 +792,56 @@ static void show_current_int(char *key, const gchar *label, gint default_val)
     prof_cons_show(msg);
 }
 
+/** Generic handler for comma-list settings (ignored_extensions, ignored_domains). */
+static void cmd_handle_string_list_setting(char **args, char *key,
+                                            const gchar *label,
+                                            char *default_val)
+{
+    if (args[0]) {
+        /* Join remaining args */
+        GString *vs = g_string_new(args[0]);
+        for (gint i = 1; args[i]; i++)
+            g_string_append_printf(vs, " %s", args[i]);
+        g_autofree gchar *val_str = g_string_free(vs, FALSE);
+
+        prof_settings_string_set(SET_GROUP, key, val_str);
+        g_autofree gchar *msg = g_strdup_printf("%s set to: %s", label, val_str);
+        prof_cons_show(msg);
+    } else {
+        g_autofree gchar *current = prof_settings_string_get(SET_GROUP, key, default_val);
+        g_autofree gchar *msg = g_strdup_printf("%s: %s", label,
+                                                 (*current) ? current : "(none)");
+        prof_cons_show(msg);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  /url_preview command handlers                                     */
+/* ------------------------------------------------------------------ */
+
+
+static void cmd_handle_enable(char **args)
+{
+    cmd_handle_bool_setting(args, "enable", "URL Preview", TRUE);
+}
+
+static void cmd_handle_cache(char **args)
+{
+    cmd_handle_bool_setting(args, "cache", "URL Preview cache", TRUE);
+}
+
 static void cmd_handle_cache_size(char **args)
 {
     if (args[0]) {
-        gchar *endptr = NULL;
-        guint64 val = g_ascii_strtoll(args[0], &endptr, 10);
-        if (*endptr == '\0' && val > 0) {
-            prof_settings_int_set(SET_GROUP, "cache_size", (gint)val);
+        gint val;
+        if (parse_positive_int(args[0], &val)) {
+            prof_settings_int_set(SET_GROUP, "cache_size", val);
             g_autofree gchar *msg =
-                g_strdup_printf("URL Preview cache size set to %ld.", val);
+                g_strdup_printf("URL Preview cache size set to %d.", val);
             prof_cons_show(msg);
 
             load_cache();
-            trim_cache((gint)val);
+            trim_cache(val);
             save_cache();
         } else {
             prof_cons_show("Cache size must be a positive integer.");
@@ -812,12 +854,11 @@ static void cmd_handle_cache_size(char **args)
 static void cmd_handle_timeout(char **args)
 {
     if (args[0]) {
-        gchar *endptr = NULL;
-        guint64 val = g_ascii_strtoll(args[0], &endptr, 10);
-        if (*endptr == '\0' && val > 0) {
-            prof_settings_int_set(SET_GROUP, "timeout", (gint)val);
+        gint val;
+        if (parse_positive_int(args[0], &val)) {
+            prof_settings_int_set(SET_GROUP, "timeout", val);
             g_autofree gchar *msg =
-                g_strdup_printf("URL Preview timeout set to %ld seconds.", val);
+                g_strdup_printf("URL Preview timeout set to %d seconds.", val);
             prof_cons_show(msg);
         } else {
             prof_cons_show("Timeout must be a positive integer.");
@@ -829,48 +870,14 @@ static void cmd_handle_timeout(char **args)
 
 static void cmd_handle_ignored_extensions(char **args)
 {
-    if (args[0]) {
-        /* Join remaining args */
-        GString *vs = g_string_new(args[0]);
-        for (gint i = 1; args[i]; i++)
-            g_string_append_printf(vs, " %s", args[i]);
-        g_autofree gchar *val_str = g_string_free(vs, FALSE);
-
-        prof_settings_string_set(SET_GROUP, "ignored_extensions", val_str);
-        g_autofree gchar *msg = g_strdup_printf("URL Preview ignored extensions set to: %s", val_str);
-        prof_cons_show(msg);
-    } else {
-        g_autofree gchar *current = prof_settings_string_get(
-            SET_GROUP, "ignored_extensions", DEFAULT_EXTS);
-        g_autofree gchar *msg =
-            g_strdup_printf("URL Preview ignored extensions: %s", current);
-        prof_cons_show(msg);
-    }
+    cmd_handle_string_list_setting(args, "ignored_extensions",
+                                   "URL Preview ignored extensions", DEFAULT_EXTS);
 }
 
 static void cmd_handle_ignored_domains(char **args)
 {
-    if (args[0]) {
-        /* Join remaining args */
-        GString *vs = g_string_new(args[0]);
-        for (gint i = 1; args[i]; i++)
-            g_string_append_printf(vs, " %s", args[i]);
-        g_autofree gchar *val_str = g_string_free(vs, FALSE);
-
-        prof_settings_string_set(SET_GROUP, "ignored_domains", val_str);
-        g_autofree gchar *msg =
-            g_strdup_printf("URL Preview ignored domains set to: %s", val_str);
-        prof_cons_show(msg);
-    } else {
-        g_autofree gchar *current = prof_settings_string_get(
-            SET_GROUP, "ignored_domains", "");
-        if (current && *current) {
-            g_autofree gchar *msg = g_strdup_printf("URL Preview ignored domains: %s", current);
-            prof_cons_show(msg);
-        } else {
-            prof_cons_show("URL Preview ignored domains: (none)");
-        }
-    }
+    cmd_handle_string_list_setting(args, "ignored_domains",
+                                   "URL Preview ignored domains", "");
 }
 
 static void cmd_handle_status(G_GNUC_UNUSED char **args)
@@ -1056,7 +1063,6 @@ char *prof_pre_room_message_display(const char *barejid,
 {
     return add_preview_to_message(barejid, message);
 }
-
 char *prof_pre_priv_message_display(const char *barejid,
                                     G_GNUC_UNUSED const char *nick,
                                     const char *message)
