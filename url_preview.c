@@ -157,10 +157,15 @@ static GHashTable *parse_html_attrs(const gchar *attrs)
     while (g_match_info_matches(match)) {
         g_autofree gchar *name_raw = g_match_info_fetch(match, 1);
 
-        /* Prefer double-quoted value; fall back to single-quoted */
-        gchar *val = g_match_info_fetch(match, 2);
-        if (!val)
-            val = g_match_info_fetch(match, 3);
+        /* Determine which value group matched (double- or single-quoted).
+         * g_match_info_fetch returns "" for non-participating groups,
+         * so we use fetch_pos to check which one actually matched. */
+        gint s2, e2, s3, e3;
+        g_match_info_fetch_pos(match, 2, &s2, &e2);
+        g_match_info_fetch_pos(match, 3, &s3, &e3);
+        gchar *val = (s2 >= 0) ? g_match_info_fetch(match, 2)
+                    : (s3 >= 0) ? g_match_info_fetch(match, 3)
+                    : NULL;
 
         if (val) {
             gchar *lower_name = g_utf8_strdown(name_raw, -1);
