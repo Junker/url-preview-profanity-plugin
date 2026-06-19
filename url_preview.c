@@ -211,12 +211,11 @@ static void load_cache(void)
 
     url_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 
-    g_autofree gchar *path = g_strdup(get_cache_path());
-    if (!g_file_test(path, G_FILE_TEST_EXISTS))
+    if (!g_file_test(get_cache_path(), G_FILE_TEST_EXISTS))
         return;
 
     g_autoptr(GKeyFile) kf = g_key_file_new();
-    if (!g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, NULL))
+    if (!g_key_file_load_from_file(kf, get_cache_path(), G_KEY_FILE_NONE, NULL))
         return;
 
     gsize n = 0;
@@ -248,8 +247,7 @@ static void save_cache(void)
     g_autoptr(GError) error = NULL;
     g_key_file_save_to_file(kf, get_cache_path(), &error);
     if (error)
-        log_debug(error->message);
-
+        log_debug("%s", error->message);
 }
 
 static gchar *get_cached_preview(const gchar *url)
@@ -335,7 +333,7 @@ static gboolean is_local_host(const gchar *host)
     if (!host) return FALSE;
 
     /* Check for localhost hostname */
-    if (g_ascii_strcasecmp(host, "localhost") == 0)
+    if (g_str_equal(host, "localhost"))
         return TRUE;
 
     /* Check for .local mDNS hostnames */
@@ -381,17 +379,16 @@ static size_t curl_write_cb(char *ptr, size_t size, size_t nmemb, void *userdata
 
 static gboolean content_type_is_html(const gchar *ctype)
 {
-    if (ctype)
-        return g_ascii_strncasecmp(ctype, "text/html", 9) == 0;
-    return FALSE;
+    return ctype && g_ascii_strncasecmp(ctype, "text/html", 9) == 0;
 }
 
+/** Sniff whether raw data looks like HTML (case-insensitive). */
 static gboolean sniff_is_html(const gchar *data)
 {
-    return (strstr(data, "<html")     != NULL ||
-            strstr(data, "<HTML")     != NULL ||
-            strstr(data, "<!DOCTYPE") != NULL ||
-            strstr(data, "<head")    != NULL);
+    g_autofree gchar *lower = g_utf8_strdown(data, -1);
+    return (strstr(lower, "<html")     != NULL ||
+            strstr(lower, "<!doctype") != NULL ||
+            strstr(lower, "<head")     != NULL);
 }
 
 static gchar *get_url_preview(const gchar *url, gint timeout)
@@ -606,8 +603,9 @@ static void strip_trailing_punct(gchar *url)
         url[--len] = '\0';
 }
 
-/** Check whether a URL should be skipped for preview. */
-static gboolean should_skip_url(const gchar *url, const gchar *jid_domain)
+/** Check whether a URL should be skipped for preview.
+ *  jid_domain_lower must be a lower-cased domain string. */
+static gboolean should_skip_url(const gchar *url, const gchar *jid_domain_lower)
 {
     g_autoptr(GUri) uri = g_uri_parse(url, G_URI_FLAGS_NONE, NULL);
     if (!uri) return TRUE;
@@ -617,10 +615,10 @@ static gboolean should_skip_url(const gchar *url, const gchar *jid_domain)
     if (!host) return TRUE;
 
     g_autofree gchar *host_lower = g_utf8_strdown(host, -1);
-    g_autofree gchar *domain_suffix = g_strconcat(".", jid_domain, NULL);
+    g_autofree gchar *domain_suffix = g_strconcat(".", jid_domain_lower, NULL);
 
     /* Skip same domain or subdomain of JID */
-    if (g_strcmp0(host_lower, jid_domain) == 0 ||
+    if (g_str_equal(host_lower, jid_domain_lower) ||
         g_str_has_suffix(host_lower, domain_suffix))
         return TRUE;
 
@@ -651,8 +649,10 @@ static gchar *add_preview_to_message(const gchar *jid, const gchar *message)
     if (!prof_settings_boolean_get(SET_GROUP, "enable", TRUE))
         return NULL;
 
-    char *jid_domain = xmpp_jid_domain(strophe_ctx, jid);
-    if (!jid_domain) return NULL;
+    char *jid_domain_raw = xmpp_jid_domain(strophe_ctx, jid);
+    if (!jid_domain_raw) return NULL;
+    g_autofree gchar *jid_domain = g_utf8_strdown(jid_domain_raw, -1);
+    xmpp_free(strophe_ctx, jid_domain_raw);
 
     gint timeout = prof_settings_int_get(SET_GROUP, "timeout", 2);
 
@@ -688,26 +688,18 @@ static gchar *add_preview_to_message(const gchar *jid, const gchar *message)
         gint cache_size = prof_settings_int_get(SET_GROUP, "cache_size", DEFAULT_CACHE_SIZE);
 
         /* Fetch and cache */
-        gchar *preview = get_url_preview(url, timeout);
-        if (preview == NULL) {
+        g_autofree gchar *preview = get_url_preview(url, timeout);
+        if (!preview) {
             put_cache(url, "", cache_size);  /* remember: no preview available */
             g_match_info_next(match, NULL);
             continue;
         }
 
         put_cache(url, preview, cache_size);
-
-        if (preview) {
-            g_string_append_c(output, '\n');
-            g_string_append(output, preview);
-            g_free(preview);
-            break;   /* preview only first valid URL */
-        }
-
-        g_match_info_next(match, NULL);
+        g_string_append_c(output, '\n');
+        g_string_append(output, preview);
+        break;   /* preview only first valid URL */
     }
-
-	xmpp_free(strophe_ctx, jid_domain);
 
     /* Return result only if we appended a preview */
     gchar *result = NULL;
@@ -913,10 +905,10 @@ static void cmd_url_preview(char **args)
         return;
     }
 
-    gchar *subcmd = args[0];
+    const gchar *subcmd = args[0];
 
     for (const CmdDispatch *d = cmd_dispatch; d->name; d++) {
-        if (g_strcmp0(subcmd, d->name) == 0) {
+        if (g_str_equal(subcmd, d->name)) {
             d->handler(args + 1);
             return;
         }
